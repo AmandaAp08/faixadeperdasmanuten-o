@@ -1,360 +1,472 @@
-import { useState, useCallback, useRef } from "react";
-import * as XLSX from "xlsx";
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Acompanhamento de Manutenção — Trafos</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;color:#111;padding:2rem;background:#f9f9f7;min-height:100vh}
+.card{background:#fff;border-radius:14px;border:0.5px solid #e0e0e0;padding:1.5rem;max-width:960px;margin:0 auto}
+input,select{background:#fff;color:#111;border:0.5px solid #ccc;border-radius:8px;font-family:inherit;outline:none}
+input:focus,select:focus{border-color:#378ADD}
+button{font-family:inherit;cursor:pointer}
+.spin{display:inline-block;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.tab-btn{padding:8px 18px;border:none;border-bottom:2px solid transparent;background:transparent;font-size:14px;color:#888;cursor:pointer;font-family:inherit}
+.tab-btn.active{border-bottom-color:#185FA5;color:#185FA5;font-weight:500}
+.dropzone{border:2px dashed #ccc;border-radius:12px;padding:1.5rem;cursor:pointer;background:#f5f5f5;text-align:center;transition:all 0.15s}
+.badge{border-radius:6px;padding:2px 10px;font-size:12px;font-weight:500;white-space:nowrap;display:inline-block}
+.table-header{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1.2fr 0.5fr;padding:8px 16px;background:#f5f5f5;font-size:12px;font-weight:500;color:#666;border-bottom:0.5px solid #e0e0e0}
+.table-row{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1.2fr 0.5fr;padding:10px 16px;align-items:center;font-size:13px}
+.stat-card{border-radius:10px;padding:12px 16px}
+</style>
+</head>
+<body>
+<div class="card">
 
-const FISCAL_COLORS = [
-  { bg: "#E6F1FB", border: "#378ADD", text: "#0C447C", label: "Azul" },
-  { bg: "#EAF3DE", border: "#639922", text: "#3B6D11", label: "Verde" },
-  { bg: "#FAEEDA", border: "#BA7517", text: "#854F0B", label: "Âmbar" },
-  { bg: "#FAECE7", border: "#D85A30", text: "#993C1D", label: "Coral" },
-  { bg: "#EEEDFE", border: "#7F77DD", text: "#3C3489", label: "Roxo" },
-  { bg: "#FBEAF0", border: "#D4537E", text: "#993556", label: "Rosa" },
-];
+  <!-- Header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:8px">
+    <h2 style="font-size:22px;font-weight:500">Acompanhamento de manutenção — trafos</h2>
+    <span id="db-status" style="font-size:12px;padding:3px 10px;border-radius:20px;background:#EAF3DE;color:#3B6D11;border:1px solid #639922">
+      <i class="ti ti-loader-2 spin" style="font-size:13px;vertical-align:-1px;margin-right:4px"></i>Conectando...
+    </span>
+  </div>
+  <p style="font-size:14px;color:#666;margin:0 0 1.5rem">Carregue a base anterior e as MFs do mês para ver o que mudou de faixa. Os dados ficam salvos no Firebase.</p>
 
-const FAIXA_ORDER = ["CRITICO", "CRITICA", "ATENCAO", "ATENÇÃO", "ADEQUADO"];
-const FAIXA_DISPLAY = {
-  CRITICO: { label: "Crítico", bg: "#FCEBEB", text: "#A32D2D", border: "#E24B4A" },
-  CRITICA: { label: "Crítico", bg: "#FCEBEB", text: "#A32D2D", border: "#E24B4A" },
-  ATENCAO: { label: "Atenção", bg: "#FAEEDA", text: "#854F0B", border: "#BA7517" },
-  "ATENÇÃO": { label: "Atenção", bg: "#FAEEDA", text: "#854F0B", border: "#BA7517" },
-  ADEQUADO: { label: "Adequado", bg: "#EAF3DE", text: "#3B6D11", border: "#639922" },
+  <!-- Tabs -->
+  <div style="display:flex;gap:4px;margin-bottom:1.5rem;border-bottom:0.5px solid #e0e0e0">
+    <button class="tab-btn active" id="tab-upload" onclick="switchTab('upload')">Upload</button>
+    <button class="tab-btn" id="tab-historico" onclick="switchTab('historico')">Histórico</button>
+  </div>
+
+  <!-- TAB UPLOAD -->
+  <div id="pane-upload">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+      <div id="drop1" class="dropzone" data-target="base">
+        <i class="ti ti-upload" style="font-size:24px;color:#aaa"></i>
+        <p style="margin:8px 0 4px;font-weight:500;font-size:14px">Base anterior (trafos + faixas)</p>
+        <p id="base-name" style="margin:0;font-size:12px;color:#aaa">Clique ou arraste um arquivo .xlsx</p>
+        <input type="file" id="base-input" accept=".xlsx,.xls" style="display:none">
+      </div>
+      <div id="drop2" class="dropzone" data-target="mf">
+        <i class="ti ti-upload" style="font-size:24px;color:#aaa"></i>
+        <p style="margin:8px 0 4px;font-weight:500;font-size:14px">MFs do mês (fiscal + nova faixa)</p>
+        <p id="mf-name" style="margin:0;font-size:12px;color:#aaa">Clique ou arraste um arquivo .xlsx</p>
+        <input type="file" id="mf-input" accept=".xlsx,.xls" style="display:none">
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+      <label style="font-size:13px;font-weight:500;color:#666;white-space:nowrap">Competência (mês/ano):</label>
+      <input type="month" id="competencia" style="font-size:13px;padding:6px 12px;width:180px">
+    </div>
+
+    <div id="error-box" style="display:none;color:#A32D2D;font-size:13px;margin:0 0 12px;padding:8px 12px;background:#FCEBEB;border-radius:8px"></div>
+
+    <button id="gen-btn" disabled style="width:100%;padding:10px;border-radius:10px;font-size:14px;font-weight:500;background:#eee;color:#aaa;border:none;margin-bottom:1.5rem;transition:background 0.15s">
+      <i class="ti ti-chart-bar" style="margin-right:8px;font-size:16px;vertical-align:-2px"></i>Gerar e salvar relatório
+    </button>
+
+    <div id="report" style="display:none">
+      <div id="stats" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:1.5rem"></div>
+      <div id="fiscais-row" style="margin-bottom:1.5rem;display:none">
+        <p style="font-size:13px;font-weight:500;color:#666;margin:0 0 8px">Fiscais identificados</p>
+        <div id="fiscais-chips" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <input id="search" type="text" placeholder="Buscar por MF ou trafo..." style="flex:1;min-width:160px;font-size:13px;padding:6px 12px">
+        <select id="filter-fiscal" style="font-size:13px;padding:6px 10px"><option>Todos</option></select>
+        <select id="filter-tipo" style="font-size:13px;padding:6px 10px"><option>Todos</option><option>Melhora</option><option>Piora</option></select>
+      </div>
+      <div style="border:0.5px solid #e0e0e0;border-radius:12px;overflow:hidden">
+        <div class="table-header"><span>MF</span><span>Trafo</span><span>Faixa anterior</span><span>Faixa nova</span><span>Fiscal</span><span></span></div>
+        <div id="table-body"></div>
+      </div>
+      <button id="export-btn" style="margin-top:12px;padding:8px 16px;border-radius:8px;font-size:13px;border:0.5px solid #ccc;background:#f5f5f5;color:#111">
+        <i class="ti ti-download" style="margin-right:6px;font-size:15px;vertical-align:-2px"></i>Exportar relatório (.xlsx)
+      </button>
+    </div>
+  </div>
+
+  <!-- TAB HISTÓRICO -->
+  <div id="pane-historico" style="display:none">
+    <div id="hist-loading" style="text-align:center;padding:2rem;color:#aaa;font-size:14px">
+      <i class="ti ti-loader-2 spin" style="font-size:20px;display:block;margin-bottom:8px"></i>Carregando histórico...
+    </div>
+    <div id="hist-list"></div>
+  </div>
+
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getDatabase, ref, push, set, get } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCxoNBUTu_WOYZTXI-48CitzH3uRko9LGs",
+  authDomain: "acompanhamanutencoesln.firebaseapp.com",
+  databaseURL: "https://acompanhamanutencoesln-default-rtdb.firebaseio.com",
+  projectId: "acompanhamanutencoesln",
+  storageBucket: "acompanhamanutencoesln.firebasestorage.app",
+  messagingSenderId: "888565328678",
+  appId: "1:888565328678:web:1bbf496f0e429c05f3efe7",
+  measurementId: "G-Q45GMR8SLN"
 };
 
-function normalizeFaixa(v) {
-  if (!v) return "";
-  return v.toString().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+const statusEl = document.getElementById("db-status");
+statusEl.innerHTML = '<i class="ti ti-database-check" style="font-size:13px;vertical-align:-1px;margin-right:4px"></i>Firebase conectado';
+statusEl.style.cssText = "font-size:12px;padding:3px 10px;border-radius:20px;background:#EAF3DE;color:#3B6D11;border:1px solid #639922";
+
+// ── constantes ────────────────────────────────────────────────────────────
+const FISCAL_COLORS = [
+  {bg:"#E6F1FB",border:"#378ADD",text:"#0C447C"},
+  {bg:"#EAF3DE",border:"#639922",text:"#3B6D11"},
+  {bg:"#FAEEDA",border:"#BA7517",text:"#854F0B"},
+  {bg:"#FAECE7",border:"#D85A30",text:"#993C1D"},
+  {bg:"#EEEDFE",border:"#7F77DD",text:"#3C3489"},
+  {bg:"#FBEAF0",border:"#D4537E",text:"#993556"},
+];
+const FAIXA_ORDER = ["CRITICO","CRITICA","ATENCAO","ADEQUADO"];
+const FAIXA_META = {
+  CRITICO:{label:"Crítico",bg:"#FCEBEB",text:"#A32D2D",border:"#E24B4A"},
+  CRITICA:{label:"Crítico",bg:"#FCEBEB",text:"#A32D2D",border:"#E24B4A"},
+  ATENCAO:{label:"Atenção",bg:"#FAEEDA",text:"#854F0B",border:"#BA7517"},
+  ADEQUADO:{label:"Adequado",bg:"#EAF3DE",text:"#3B6D11",border:"#639922"},
+};
+
+// ── helpers ───────────────────────────────────────────────────────────────
+function normFaixa(v){
+  if(!v) return "";
+  return v.toString().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
 }
-
-function Badge({ faixa }) {
-  const key = normalizeFaixa(faixa);
-  const style = FAIXA_DISPLAY[key] || { label: faixa || "—", bg: "#F1EFE8", text: "#5F5E5A", border: "#B4B2A9" };
-  return (
-    <span style={{
-      background: style.bg,
-      color: style.text,
-      border: `1px solid ${style.border}`,
-      borderRadius: 6,
-      padding: "2px 10px",
-      fontSize: 12,
-      fontWeight: 500,
-      whiteSpace: "nowrap",
-    }}>{style.label || faixa}</span>
-  );
+function fiscalColor(f){
+  let h=0;
+  for(let i=0;i<f.length;i++) h=(h*31+f.charCodeAt(i))%FISCAL_COLORS.length;
+  return FISCAL_COLORS[h];
 }
-
-function DropZone({ label, onFile, fileName, color }) {
-  const inputRef = useRef();
-  const [dragging, setDragging] = useState(false);
-
-  const handle = (file) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const wb = XLSX.read(e.target.result, { type: "array" });
-      const sheets = {};
-      wb.SheetNames.forEach(name => {
-        sheets[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: "" });
-      });
-      onFile({ sheets, fileName: file.name });
-    };
-    reader.readAsArrayBuffer(file);
+function badge(faixa){
+  const k=normFaixa(faixa);
+  const m=FAIXA_META[k]||{label:faixa||"—",bg:"#F1EFE8",text:"#5F5E5A",border:"#B4B2A9"};
+  return `<span class="badge" style="background:${m.bg};color:${m.text};border:1px solid ${m.border}">${m.label||faixa}</span>`;
+}
+function fiscalChip(f,count=""){
+  const c=fiscalColor(f);
+  return `<span style="background:${c.bg};color:${c.text};border:1px solid ${c.border};border-radius:8px;padding:4px 12px;font-size:13px;font-weight:500">${f}${count?` <span style="opacity:0.7;font-weight:400">· ${count} MFs</span>`:""}</span>`;
+}
+function readFile(file,cb){
+  const r=new FileReader();
+  r.onload=e=>{
+    const wb=XLSX.read(e.target.result,{type:"array"});
+    const sheets={};
+    wb.SheetNames.forEach(n=>{sheets[n]=XLSX.utils.sheet_to_json(wb.Sheets[n],{defval:""});});
+    cb(sheets);
   };
-
-  return (
-    <div
-      onClick={() => inputRef.current.click()}
-      onDragOver={e => { e.preventDefault(); setDragging(true); }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={e => { e.preventDefault(); setDragging(false); handle(e.dataTransfer.files[0]); }}
-      style={{
-        border: `2px dashed ${dragging ? color.border : (fileName ? color.border : "var(--color-border-secondary)")}`,
-        borderRadius: 12,
-        padding: "1.5rem",
-        cursor: "pointer",
-        background: fileName ? color.bg : "var(--color-background-secondary)",
-        transition: "all 0.15s",
-        textAlign: "center",
-      }}
-    >
-      <input ref={inputRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }}
-        onChange={e => handle(e.target.files[0])} />
-      <i className="ti ti-upload" style={{ fontSize: 24, color: fileName ? color.border : "var(--color-text-tertiary)" }} aria-hidden="true" />
-      <p style={{ margin: "8px 0 4px", fontWeight: 500, color: fileName ? color.text : "var(--color-text-primary)", fontSize: 14 }}>{label}</p>
-      <p style={{ margin: 0, fontSize: 12, color: fileName ? color.border : "var(--color-text-tertiary)" }}>
-        {fileName || "Clique ou arraste um arquivo .xlsx"}
-      </p>
-    </div>
-  );
+  r.readAsArrayBuffer(file);
 }
-
-function detectColumns(rows) {
-  if (!rows || rows.length === 0) return {};
-  const keys = Object.keys(rows[0]);
-  const find = (...terms) => keys.find(k => terms.some(t => k.toUpperCase().includes(t))) || null;
-  return {
-    mf: find("MFINSTALLA", "INSTALACAO", "MF", "INSTALAÇÃO"),
-    trafo: find("TRAFO"),
-    faixa: find("FAIXA"),
-    lat: find("LAT", "LATITUDE"),
-    lon: find("LON", "LONGITUDE", "LONG"),
-    fiscal: find("FISCAL", "RESPONSAVEL", "RESPONSÁVEL"),
+function detectCols(rows){
+  if(!rows||!rows.length) return {};
+  const keys=Object.keys(rows[0]);
+  const find=(...terms)=>keys.find(k=>terms.some(t=>k.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^A-Z]/g,"").includes(t)))||null;
+  return{
+    mf:   find("MFINSTALLA","INSTALACAO","INSTALAO"),
+    trafo:find("TRAFO"),
+    faixa:find("FAIXA"),
+    fiscal:find("FISCAL","RESPONSAVEL"),
   };
 }
-
-function parseBase(sheetsData) {
-  for (const [, rows] of Object.entries(sheetsData)) {
-    const cols = detectColumns(rows);
-    if (cols.mf && cols.faixa) return { rows, cols };
-  }
+function parseBase(sheets){
+  for(const rows of Object.values(sheets)){const c=detectCols(rows);if(c.mf&&c.faixa)return{rows,cols:c};}
   return null;
 }
-
-function parseMF(sheetsData) {
-  for (const [, rows] of Object.entries(sheetsData)) {
-    const cols = detectColumns(rows);
-    if (cols.mf && (cols.fiscal || cols.trafo)) return { rows, cols };
-  }
+function parseMF(sheets){
+  for(const rows of Object.values(sheets)){const c=detectCols(rows);if(c.mf)return{rows,cols:c};}
   return null;
 }
+function showError(msg){
+  const b=document.getElementById("error-box");
+  b.textContent=msg; b.style.display=msg?"block":"none";
+}
 
-function generateReport(baseData, mfData) {
-  const { rows: baseRows, cols: baseCols } = baseData;
-  const { rows: mfRows, cols: mfCols } = mfData;
+// ── state ─────────────────────────────────────────────────────────────────
+let baseSheets=null, mfSheets=null, allChanges=[], currentFiscais=[];
 
-  const baseMap = {};
-  baseRows.forEach(r => {
-    const key = String(r[baseCols.mf] || "").trim();
-    if (key) baseMap[key] = r;
+function updateBtn(){
+  const btn=document.getElementById("gen-btn");
+  const ok=baseSheets&&mfSheets;
+  btn.disabled=!ok;
+  btn.style.background=ok?"#185FA5":"#eee";
+  btn.style.color=ok?"#fff":"#aaa";
+}
+
+function markDrop(id,name,color){
+  const el=document.getElementById(id);
+  el.style.borderColor=color.border;
+  el.style.background=color.bg;
+  el.querySelector("i").style.color=color.border;
+  el.querySelectorAll("p")[0].style.color=color.text;
+  el.querySelectorAll("p")[1].textContent=name;
+  el.querySelectorAll("p")[1].style.color=color.border;
+}
+
+// ── drop zones ────────────────────────────────────────────────────────────
+document.getElementById("drop1").addEventListener("click",()=>document.getElementById("base-input").click());
+document.getElementById("drop2").addEventListener("click",()=>document.getElementById("mf-input").click());
+
+["drop1","drop2"].forEach(id=>{
+  const el=document.getElementById(id);
+  el.addEventListener("dragover",e=>e.preventDefault());
+  el.addEventListener("drop",e=>{
+    e.preventDefault();
+    const f=e.dataTransfer.files[0]; if(!f)return;
+    const tgt=el.dataset.target;
+    readFile(f,s=>{
+      if(tgt==="base"){baseSheets=s;markDrop("drop1",f.name,{bg:"#E6F1FB",border:"#378ADD",text:"#0C447C"});}
+      else{mfSheets=s;markDrop("drop2",f.name,{bg:"#EAF3DE",border:"#639922",text:"#3B6D11"});}
+      updateBtn();
+    });
+  });
+});
+
+document.getElementById("base-input").addEventListener("change",e=>{
+  const f=e.target.files[0]; if(!f)return;
+  readFile(f,s=>{baseSheets=s;markDrop("drop1",f.name,{bg:"#E6F1FB",border:"#378ADD",text:"#0C447C"});updateBtn();});
+});
+document.getElementById("mf-input").addEventListener("change",e=>{
+  const f=e.target.files[0]; if(!f)return;
+  readFile(f,s=>{mfSheets=s;markDrop("drop2",f.name,{bg:"#EAF3DE",border:"#639922",text:"#3B6D11"});updateBtn();});
+});
+
+// ── gerar relatório ───────────────────────────────────────────────────────
+document.getElementById("gen-btn").addEventListener("click", async ()=>{
+  showError("");
+  const competencia=document.getElementById("competencia").value;
+  if(!competencia){showError("Informe a competência (mês/ano) antes de gerar.");return;}
+
+  const baseData=parseBase(baseSheets);
+  const mfData=parseMF(mfSheets);
+  if(!baseData){showError("Não foi possível identificar as colunas na base de trafos. Verifique se há colunas MFINSTALLA e FAIXA.");return;}
+  if(!mfData){showError("Não foi possível identificar as colunas nas MFs do mês. Verifique se há coluna MFINSTALLA.");return;}
+
+  const baseMap={};
+  baseData.rows.forEach(r=>{const k=String(r[baseData.cols.mf]||"").trim();if(k)baseMap[k]=r;});
+
+  const fiscalMap={};
+  mfData.rows.forEach(r=>{
+    const k=String(r[mfData.cols.mf]||"").trim(); if(!k)return;
+    const fiscal=mfData.cols.fiscal?(r[mfData.cols.fiscal]||"Sem fiscal"):"Sem fiscal";
+    if(!fiscalMap[fiscal])fiscalMap[fiscal]=0;
+    fiscalMap[fiscal]++;
   });
 
-  const fiscalMap = {};
-  mfRows.forEach(r => {
-    const key = String(r[mfCols.mf] || "").trim();
-    if (!key) return;
-    const fiscal = mfCols.fiscal ? (r[mfCols.fiscal] || "Sem fiscal") : "Sem fiscal";
-    if (!fiscalMap[fiscal]) fiscalMap[fiscal] = [];
-    fiscalMap[fiscal].push({ key, row: r });
-  });
-
-  const changes = [];
-  mfRows.forEach(r => {
-    const key = String(r[mfCols.mf] || "").trim();
-    if (!key) return;
-    const faixaNova = normalizeFaixa(r[mfCols.faixa] || "");
-    const baseRow = baseMap[key];
-    const faixaAnt = baseRow ? normalizeFaixa(baseRow[baseCols.faixa] || "") : "";
-    if (faixaAnt && faixaNova && faixaAnt !== faixaNova) {
-      const fiscal = mfCols.fiscal ? (r[mfCols.fiscal] || "Sem fiscal") : "Sem fiscal";
-      changes.push({
-        mf: key,
-        trafo: r[mfCols.trafo] || baseRow?.[baseCols.trafo] || "—",
-        faixaAnt,
-        faixaNova,
-        fiscal,
-        melhora: FAIXA_ORDER.indexOf(faixaAnt) > FAIXA_ORDER.indexOf(faixaNova),
+  allChanges=[];
+  mfData.rows.forEach(r=>{
+    const k=String(r[mfData.cols.mf]||"").trim(); if(!k)return;
+    const fNova=normFaixa(r[mfData.cols.faixa]||"");
+    const bRow=baseMap[k];
+    const fAnt=bRow?normFaixa(bRow[baseData.cols.faixa]||""):"";
+    if(fAnt&&fNova&&fAnt!==fNova){
+      const fiscal=mfData.cols.fiscal?(r[mfData.cols.fiscal]||"Sem fiscal"):"Sem fiscal";
+      const melhora=FAIXA_ORDER.indexOf(fAnt)>FAIXA_ORDER.indexOf(fNova);
+      allChanges.push({
+        mf:k,
+        trafo:String(r[mfData.cols.trafo]||bRow?.[baseData.cols.trafo]||"—"),
+        faixaAnt:fAnt, faixaNova:fNova, fiscal, melhora
       });
     }
   });
 
-  return { changes, fiscalMap };
-}
+  // salvar no Firebase
+  const btn=document.getElementById("gen-btn");
+  btn.innerHTML='<i class="ti ti-loader-2 spin" style="margin-right:8px;font-size:16px;vertical-align:-2px"></i>Salvando no Firebase...';
+  btn.disabled=true;
+  try{
+    const payload={
+      competencia,
+      criadoEm: new Date().toISOString(),
+      totalMudancas: allChanges.length,
+      melhoras: allChanges.filter(c=>c.melhora).length,
+      pioras: allChanges.filter(c=>!c.melhora).length,
+      fiscais: fiscalMap,
+      mudancas: allChanges,
+    };
+    const newRef=push(ref(db,"relatorios"));
+    await set(newRef,payload);
+    statusEl.innerHTML='<i class="ti ti-cloud-check" style="font-size:13px;vertical-align:-1px;margin-right:4px"></i>Salvo no Firebase';
+  }catch(err){
+    showError("Erro ao salvar no Firebase: "+err.message);
+  }
+  btn.innerHTML='<i class="ti ti-chart-bar" style="margin-right:8px;font-size:16px;vertical-align:-2px"></i>Gerar e salvar relatório';
+  btn.disabled=false; updateBtn();
 
-export default function App() {
-  const [baseFile, setBaseFile] = useState(null);
-  const [mfFile, setMfFile] = useState(null);
-  const [report, setReport] = useState(null);
-  const [error, setError] = useState("");
-  const [filterFiscal, setFilterFiscal] = useState("Todos");
-  const [filterTipo, setFilterTipo] = useState("Todos");
-  const [search, setSearch] = useState("");
+  // renderizar stats
+  const melhoras=allChanges.filter(c=>c.melhora).length;
+  const pioras=allChanges.filter(c=>!c.melhora).length;
+  document.getElementById("stats").innerHTML=[
+    {label:"Total de mudanças",value:allChanges.length,bg:"#F1EFE8",text:"#2C2C2A"},
+    {label:"Melhorias de faixa",value:melhoras,bg:"#EAF3DE",text:"#3B6D11"},
+    {label:"Pioras de faixa",value:pioras,bg:"#FCEBEB",text:"#A32D2D"},
+  ].map(s=>`<div class="stat-card" style="background:${s.bg}"><p style="font-size:12px;color:${s.text};margin:0 0 4px;opacity:0.7">${s.label}</p><p style="font-size:26px;font-weight:500;color:${s.text};margin:0">${s.value}</p></div>`).join("");
 
-  const fiscalColors = useCallback((fiscal) => {
-    if (!fiscal) return FISCAL_COLORS[0];
-    let h = 0;
-    for (let i = 0; i < fiscal.length; i++) h = (h * 31 + fiscal.charCodeAt(i)) % FISCAL_COLORS.length;
-    return FISCAL_COLORS[h];
-  }, []);
+  currentFiscais=Object.keys(fiscalMap);
+  if(currentFiscais.length){
+    document.getElementById("fiscais-row").style.display="block";
+    document.getElementById("fiscais-chips").innerHTML=currentFiscais.map(f=>fiscalChip(f,fiscalMap[f])).join("");
+  }
+  const sel=document.getElementById("filter-fiscal");
+  sel.innerHTML="<option>Todos</option>"+currentFiscais.map(f=>`<option>${f}</option>`).join("");
 
-  const handleGenerate = () => {
-    setError("");
-    if (!baseFile || !mfFile) { setError("Carregue os dois arquivos antes de gerar o relatório."); return; }
-    const baseData = parseBase(baseFile.sheets);
-    const mfData = parseMF(mfFile.sheets);
-    if (!baseData) { setError("Não foi possível identificar as colunas na base de trafos. Verifique se há colunas MFINSTALLA e FAIXA."); return; }
-    if (!mfData) { setError("Não foi possível identificar as colunas nas MFs do mês. Verifique se há coluna MFINSTALLA."); return; }
-    const result = generateReport(baseData, mfData);
-    setReport(result);
-    setFilterFiscal("Todos");
-    setFilterTipo("Todos");
-    setSearch("");
-  };
+  renderTable();
+  document.getElementById("report").style.display="block";
+});
 
-  const fiscais = report ? ["Todos", ...new Set(report.changes.map(c => c.fiscal))] : [];
-  const filtered = report ? report.changes.filter(c => {
-    if (filterFiscal !== "Todos" && c.fiscal !== filterFiscal) return false;
-    if (filterTipo === "Melhora" && !c.melhora) return false;
-    if (filterTipo === "Piora" && c.melhora) return false;
-    if (search && !c.mf.includes(search) && !c.trafo.toString().includes(search)) return false;
+// ── tabela ────────────────────────────────────────────────────────────────
+function renderTable(){
+  const search=document.getElementById("search").value.toLowerCase();
+  const ff=document.getElementById("filter-fiscal").value;
+  const ft=document.getElementById("filter-tipo").value;
+  const filtered=allChanges.filter(c=>{
+    if(ff!=="Todos"&&c.fiscal!==ff)return false;
+    if(ft==="Melhora"&&!c.melhora)return false;
+    if(ft==="Piora"&&c.melhora)return false;
+    if(search&&!c.mf.toLowerCase().includes(search)&&!String(c.trafo).toLowerCase().includes(search))return false;
     return true;
-  }) : [];
+  });
+  const body=document.getElementById("table-body");
+  if(!filtered.length){
+    body.innerHTML=`<p style="text-align:center;padding:2rem;color:#aaa;font-size:14px">Nenhuma mudança encontrada.</p>`;
+    return;
+  }
+  body.innerHTML=filtered.map((c,i)=>{
+    const fc=fiscalColor(c.fiscal);
+    const icon=c.melhora
+      ?`<i class="ti ti-arrow-up" style="color:#3B6D11;font-size:16px"></i>`
+      :`<i class="ti ti-arrow-down" style="color:#A32D2D;font-size:16px"></i>`;
+    return`<div class="table-row" style="${i>0?"border-top:0.5px solid #e0e0e0":""};background:${i%2===0?"#fff":"#f9f9f7"}">
+      <span style="font-family:monospace;font-size:12px">${c.mf}</span>
+      <span style="color:#666;font-size:12px">${c.trafo}</span>
+      <span>${badge(c.faixaAnt)}</span>
+      <span>${badge(c.faixaNova)}</span>
+      <span style="background:${fc.bg};color:${fc.text};border:1px solid ${fc.border};border-radius:6px;padding:2px 8px;font-size:12px;font-weight:500;display:inline-block">${c.fiscal}</span>
+      <span style="text-align:center">${icon}</span>
+    </div>`;
+  }).join("");
 
-  const melhoras = report ? report.changes.filter(c => c.melhora).length : 0;
-  const pioras = report ? report.changes.filter(c => !c.melhora).length : 0;
-
-  return (
-    <div style={{ padding: "1.5rem 0", fontFamily: "var(--font-sans)" }}>
-      <h2 style={{ fontSize: 22, fontWeight: 500, margin: "0 0 4px", color: "var(--color-text-primary)" }}>
-        Acompanhamento de manutenção — trafos
-      </h2>
-      <p style={{ fontSize: 14, color: "var(--color-text-secondary)", margin: "0 0 1.5rem" }}>
-        Carregue a base anterior e as MFs do mês para ver o que mudou de faixa.
-      </p>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-        <DropZone
-          label="Base anterior (trafos + faixas)"
-          onFile={(d) => setBaseFile(d)}
-          fileName={baseFile?.fileName}
-          color={{ bg: "#E6F1FB", border: "#378ADD", text: "#0C447C" }}
-        />
-        <DropZone
-          label="MFs atribuídas no mês (fiscal + nova faixa)"
-          onFile={(d) => setMfFile(d)}
-          fileName={mfFile?.fileName}
-          color={{ bg: "#EAF3DE", border: "#639922", text: "#3B6D11" }}
-        />
-      </div>
-
-      {error && (
-        <p style={{ color: "var(--color-text-danger)", fontSize: 13, margin: "0 0 12px", padding: "8px 12px", background: "var(--color-background-danger)", borderRadius: 8 }}>{error}</p>
-      )}
-
-      <button
-        onClick={handleGenerate}
-        disabled={!baseFile || !mfFile}
-        style={{
-          width: "100%", padding: "10px", borderRadius: 10, fontSize: 14, fontWeight: 500,
-          background: (baseFile && mfFile) ? "#185FA5" : "var(--color-background-secondary)",
-          color: (baseFile && mfFile) ? "#fff" : "var(--color-text-tertiary)",
-          border: "none", cursor: (baseFile && mfFile) ? "pointer" : "default", marginBottom: "1.5rem",
-          transition: "background 0.15s",
-        }}
-      >
-        <i className="ti ti-chart-bar" style={{ marginRight: 8, fontSize: 16, verticalAlign: -2 }} aria-hidden="true" />
-        Gerar relatório de mudanças
-      </button>
-
-      {report && (
-        <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: "1.5rem" }}>
-            {[
-              { label: "Total de mudanças", value: report.changes.length, bg: "#F1EFE8", text: "#2C2C2A" },
-              { label: "Melhorias de faixa", value: melhoras, bg: "#EAF3DE", text: "#3B6D11" },
-              { label: "Pioras de faixa", value: pioras, bg: "#FCEBEB", text: "#A32D2D" },
-            ].map(s => (
-              <div key={s.label} style={{ background: s.bg, borderRadius: 10, padding: "12px 16px" }}>
-                <p style={{ fontSize: 12, color: s.text, margin: "0 0 4px", opacity: 0.7 }}>{s.label}</p>
-                <p style={{ fontSize: 26, fontWeight: 500, color: s.text, margin: 0 }}>{s.value}</p>
-              </div>
-            ))}
-          </div>
-
-          {Object.keys(report.fiscalMap).length > 0 && (
-            <div style={{ marginBottom: "1.5rem" }}>
-              <p style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-secondary)", margin: "0 0 8px" }}>Fiscais identificados</p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {Object.entries(report.fiscalMap).map(([fiscal, mfs]) => {
-                  const c = fiscalColors(fiscal);
-                  return (
-                    <span key={fiscal} style={{
-                      background: c.bg, color: c.text, border: `1px solid ${c.border}`,
-                      borderRadius: 8, padding: "4px 12px", fontSize: 13, fontWeight: 500,
-                    }}>
-                      {fiscal} <span style={{ opacity: 0.7, fontWeight: 400 }}>· {mfs.length} MFs</span>
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-            <input
-              type="text"
-              placeholder="Buscar por MF ou trafo..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              style={{ flex: 1, minWidth: 160, fontSize: 13, padding: "6px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)" }}
-            />
-            <select value={filterFiscal} onChange={e => setFilterFiscal(e.target.value)}
-              style={{ fontSize: 13, padding: "6px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)" }}>
-              {fiscais.map(f => <option key={f}>{f}</option>)}
-            </select>
-            <select value={filterTipo} onChange={e => setFilterTipo(e.target.value)}
-              style={{ fontSize: 13, padding: "6px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)" }}>
-              {["Todos", "Melhora", "Piora"].map(f => <option key={f}>{f}</option>)}
-            </select>
-          </div>
-
-          <div style={{ border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, overflow: "hidden" }}>
-            <div style={{
-              display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr 1.2fr 0.5fr",
-              padding: "8px 16px", background: "var(--color-background-secondary)",
-              fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)",
-              borderBottom: "0.5px solid var(--color-border-tertiary)",
-            }}>
-              <span>MF</span><span>Trafo</span><span>Faixa anterior</span><span>Faixa nova</span><span>Fiscal</span><span></span>
-            </div>
-            {filtered.length === 0 && (
-              <p style={{ textAlign: "center", padding: "2rem", color: "var(--color-text-tertiary)", fontSize: 14 }}>Nenhuma mudança encontrada com os filtros aplicados.</p>
-            )}
-            {filtered.map((c, i) => {
-              const fc = fiscalColors(c.fiscal);
-              return (
-                <div key={i} style={{
-                  display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr 1.2fr 0.5fr",
-                  padding: "10px 16px", alignItems: "center", fontSize: 13,
-                  borderBottom: i < filtered.length - 1 ? "0.5px solid var(--color-border-tertiary)" : "none",
-                  background: i % 2 === 0 ? "var(--color-background-primary)" : "var(--color-background-secondary)",
-                }}>
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--color-text-primary)" }}>{c.mf}</span>
-                  <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>{c.trafo}</span>
-                  <span><Badge faixa={c.faixaAnt} /></span>
-                  <span><Badge faixa={c.faixaNova} /></span>
-                  <span style={{
-                    background: fc.bg, color: fc.text, border: `1px solid ${fc.border}`,
-                    borderRadius: 6, padding: "2px 8px", fontSize: 12, fontWeight: 500, display: "inline-block"
-                  }}>{c.fiscal}</span>
-                  <span style={{ textAlign: "center" }}>
-                    {c.melhora
-                      ? <i className="ti ti-arrow-up" style={{ color: "#3B6D11", fontSize: 16 }} title="Melhora" aria-label="Melhora" />
-                      : <i className="ti ti-arrow-down" style={{ color: "#A32D2D", fontSize: 16 }} title="Piora" aria-label="Piora" />}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          {filtered.length > 0 && (
-            <button onClick={() => {
-              const wb = XLSX.utils.book_new();
-              const wsData = [
-                ["MF", "Trafo", "Faixa Anterior", "Faixa Nova", "Fiscal", "Tipo"],
-                ...filtered.map(c => [c.mf, c.trafo, c.faixaAnt, c.faixaNova, c.fiscal, c.melhora ? "Melhora" : "Piora"]),
-              ];
-              const ws = XLSX.utils.aoa_to_sheet(wsData);
-              XLSX.utils.book_append_sheet(wb, ws, "Relatório");
-              XLSX.writeFile(wb, "relatorio_mudancas_faixa.xlsx");
-            }} style={{
-              marginTop: 12, padding: "8px 16px", borderRadius: 8, fontSize: 13,
-              border: "0.5px solid var(--color-border-secondary)", cursor: "pointer",
-              background: "var(--color-background-secondary)", color: "var(--color-text-primary)",
-            }}>
-              <i className="ti ti-download" style={{ marginRight: 6, fontSize: 15, verticalAlign: -2 }} aria-hidden="true" />
-              Exportar relatório (.xlsx)
-            </button>
-          )}
-        </>
-      )}
-    </div>
-  );
+  document.getElementById("export-btn").onclick=()=>{
+    const wb=XLSX.utils.book_new();
+    const ws=XLSX.utils.aoa_to_sheet([
+      ["MF","Trafo","Faixa Anterior","Faixa Nova","Fiscal","Tipo"],
+      ...filtered.map(c=>[c.mf,c.trafo,c.faixaAnt,c.faixaNova,c.fiscal,c.melhora?"Melhora":"Piora"]),
+    ]);
+    XLSX.utils.book_append_sheet(wb,ws,"Relatório");
+    XLSX.writeFile(wb,"relatorio_mudancas_faixa.xlsx");
+  };
 }
+["search","filter-fiscal","filter-tipo"].forEach(id=>document.getElementById(id).addEventListener("input",renderTable));
+
+// ── tabs ──────────────────────────────────────────────────────────────────
+window.switchTab=function(tab){
+  document.getElementById("pane-upload").style.display=tab==="upload"?"block":"none";
+  document.getElementById("pane-historico").style.display=tab==="historico"?"block":"none";
+  document.getElementById("tab-upload").className="tab-btn"+(tab==="upload"?" active":"");
+  document.getElementById("tab-historico").className="tab-btn"+(tab==="historico"?" active":"");
+  if(tab==="historico") loadHistorico();
+};
+
+// ── histórico ─────────────────────────────────────────────────────────────
+async function loadHistorico(){
+  const loading=document.getElementById("hist-loading");
+  const list=document.getElementById("hist-list");
+  loading.style.display="block"; list.innerHTML="";
+  try{
+    const snap=await get(ref(db,"relatorios"));
+    loading.style.display="none";
+    if(!snap.exists()){
+      list.innerHTML=`<p style="text-align:center;padding:2rem;color:#aaa;font-size:14px">Nenhum relatório salvo ainda.</p>`;
+      return;
+    }
+    const items=[];
+    snap.forEach(child=>{items.push({id:child.key,...child.val()});});
+    items.sort((a,b)=>b.criadoEm.localeCompare(a.criadoEm));
+
+    list.innerHTML=items.map(item=>{
+      const fiscaisHtml=item.fiscais?Object.entries(item.fiscais).map(([f,n])=>fiscalChip(f,n)).join(" "):"";
+      const data=new Date(item.criadoEm).toLocaleString("pt-BR");
+      const comp=item.competencia?item.competencia.split("-").reverse().join("/"):"—";
+      return`<div style="border:0.5px solid #e0e0e0;border-radius:12px;padding:1rem 1.25rem;margin-bottom:12px;background:#fff">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+          <div>
+            <p style="font-size:15px;font-weight:500;margin:0 0 2px">Competência: ${comp}</p>
+            <p style="font-size:12px;color:#666;margin:0">Gerado em ${data}</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <span style="background:#F1EFE8;color:#2C2C2A;border-radius:8px;padding:3px 10px;font-size:12px;font-weight:500">${item.totalMudancas} mudanças</span>
+            <span style="background:#EAF3DE;color:#3B6D11;border-radius:8px;padding:3px 10px;font-size:12px;font-weight:500">↑ ${item.melhoras} melhoras</span>
+            <span style="background:#FCEBEB;color:#A32D2D;border-radius:8px;padding:3px 10px;font-size:12px;font-weight:500">↓ ${item.pioras} pioras</span>
+          </div>
+        </div>
+        ${fiscaisHtml?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${fiscaisHtml}</div>`:""}
+        <button onclick="expandir('${item.id}')" style="font-size:12px;padding:5px 12px;border-radius:8px;border:0.5px solid #ccc;background:#f5f5f5;color:#111;margin-right:6px">
+          <i class="ti ti-table" style="margin-right:4px;font-size:13px;vertical-align:-1px"></i>Ver mudanças
+        </button>
+        <button onclick="exportarHist('${item.id}')" style="font-size:12px;padding:5px 12px;border-radius:8px;border:0.5px solid #ccc;background:#f5f5f5;color:#111">
+          <i class="ti ti-download" style="margin-right:4px;font-size:13px;vertical-align:-1px"></i>Exportar
+        </button>
+        <div id="expand-${item.id}" style="display:none;margin-top:12px;border:0.5px solid #e0e0e0;border-radius:10px;overflow:hidden">
+          <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1.2fr 0.5fr;padding:7px 14px;background:#f5f5f5;font-size:11px;font-weight:500;color:#666;border-bottom:0.5px solid #e0e0e0">
+            <span>MF</span><span>Trafo</span><span>Anterior</span><span>Nova</span><span>Fiscal</span><span></span>
+          </div>
+          ${(item.mudancas||[]).map((c,i)=>{
+            const fc=fiscalColor(c.fiscal);
+            const icon=c.melhora
+              ?`<i class="ti ti-arrow-up" style="color:#3B6D11;font-size:14px"></i>`
+              :`<i class="ti ti-arrow-down" style="color:#A32D2D;font-size:14px"></i>`;
+            return`<div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1.2fr 0.5fr;padding:8px 14px;align-items:center;font-size:12px;${i>0?"border-top:0.5px solid #e0e0e0":""};background:${i%2===0?"#fff":"#f9f9f7"}">
+              <span style="font-family:monospace;font-size:11px">${c.mf}</span>
+              <span style="color:#666;font-size:11px">${c.trafo}</span>
+              <span>${badge(c.faixaAnt)}</span>
+              <span>${badge(c.faixaNova)}</span>
+              <span style="background:${fc.bg};color:${fc.text};border:1px solid ${fc.border};border-radius:6px;padding:1px 7px;font-size:11px;font-weight:500">${c.fiscal}</span>
+              <span style="text-align:center">${icon}</span>
+            </div>`;
+          }).join("")}
+        </div>
+      </div>`;
+    }).join("");
+
+    window.__histData=items.reduce((acc,i)=>{acc[i.id]=i;return acc;},{});
+  }catch(err){
+    loading.style.display="none";
+    list.innerHTML=`<p style="color:#A32D2D;font-size:13px;padding:1rem;background:#FCEBEB;border-radius:8px">Erro ao carregar histórico: ${err.message}</p>`;
+  }
+}
+
+window.expandir=function(id){
+  const el=document.getElementById("expand-"+id);
+  el.style.display=el.style.display==="none"?"block":"none";
+};
+
+window.exportarHist=function(id){
+  const item=window.__histData&&window.__histData[id];
+  if(!item||!item.mudancas)return;
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet([
+    ["MF","Trafo","Faixa Anterior","Faixa Nova","Fiscal","Tipo"],
+    ...item.mudancas.map(c=>[c.mf,c.trafo,c.faixaAnt,c.faixaNova,c.fiscal,c.melhora?"Melhora":"Piora"]),
+  ]);
+  XLSX.utils.book_append_sheet(wb,ws,"Relatório");
+  const comp=item.competencia?item.competencia.replace("-","_"):"sem_data";
+  XLSX.writeFile(wb,`relatorio_${comp}.xlsx`);
+};
+
+// competência padrão = mês atual
+const now=new Date();
+document.getElementById("competencia").value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+</script>
+</body>
+</html>
