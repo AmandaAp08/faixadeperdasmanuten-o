@@ -1,0 +1,360 @@
+import { useState, useCallback, useRef } from "react";
+import * as XLSX from "xlsx";
+
+const FISCAL_COLORS = [
+  { bg: "#E6F1FB", border: "#378ADD", text: "#0C447C", label: "Azul" },
+  { bg: "#EAF3DE", border: "#639922", text: "#3B6D11", label: "Verde" },
+  { bg: "#FAEEDA", border: "#BA7517", text: "#854F0B", label: "Âmbar" },
+  { bg: "#FAECE7", border: "#D85A30", text: "#993C1D", label: "Coral" },
+  { bg: "#EEEDFE", border: "#7F77DD", text: "#3C3489", label: "Roxo" },
+  { bg: "#FBEAF0", border: "#D4537E", text: "#993556", label: "Rosa" },
+];
+
+const FAIXA_ORDER = ["CRITICO", "CRITICA", "ATENCAO", "ATENÇÃO", "ADEQUADO"];
+const FAIXA_DISPLAY = {
+  CRITICO: { label: "Crítico", bg: "#FCEBEB", text: "#A32D2D", border: "#E24B4A" },
+  CRITICA: { label: "Crítico", bg: "#FCEBEB", text: "#A32D2D", border: "#E24B4A" },
+  ATENCAO: { label: "Atenção", bg: "#FAEEDA", text: "#854F0B", border: "#BA7517" },
+  "ATENÇÃO": { label: "Atenção", bg: "#FAEEDA", text: "#854F0B", border: "#BA7517" },
+  ADEQUADO: { label: "Adequado", bg: "#EAF3DE", text: "#3B6D11", border: "#639922" },
+};
+
+function normalizeFaixa(v) {
+  if (!v) return "";
+  return v.toString().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+}
+
+function Badge({ faixa }) {
+  const key = normalizeFaixa(faixa);
+  const style = FAIXA_DISPLAY[key] || { label: faixa || "—", bg: "#F1EFE8", text: "#5F5E5A", border: "#B4B2A9" };
+  return (
+    <span style={{
+      background: style.bg,
+      color: style.text,
+      border: `1px solid ${style.border}`,
+      borderRadius: 6,
+      padding: "2px 10px",
+      fontSize: 12,
+      fontWeight: 500,
+      whiteSpace: "nowrap",
+    }}>{style.label || faixa}</span>
+  );
+}
+
+function DropZone({ label, onFile, fileName, color }) {
+  const inputRef = useRef();
+  const [dragging, setDragging] = useState(false);
+
+  const handle = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const wb = XLSX.read(e.target.result, { type: "array" });
+      const sheets = {};
+      wb.SheetNames.forEach(name => {
+        sheets[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: "" });
+      });
+      onFile({ sheets, fileName: file.name });
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  return (
+    <div
+      onClick={() => inputRef.current.click()}
+      onDragOver={e => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={e => { e.preventDefault(); setDragging(false); handle(e.dataTransfer.files[0]); }}
+      style={{
+        border: `2px dashed ${dragging ? color.border : (fileName ? color.border : "var(--color-border-secondary)")}`,
+        borderRadius: 12,
+        padding: "1.5rem",
+        cursor: "pointer",
+        background: fileName ? color.bg : "var(--color-background-secondary)",
+        transition: "all 0.15s",
+        textAlign: "center",
+      }}
+    >
+      <input ref={inputRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }}
+        onChange={e => handle(e.target.files[0])} />
+      <i className="ti ti-upload" style={{ fontSize: 24, color: fileName ? color.border : "var(--color-text-tertiary)" }} aria-hidden="true" />
+      <p style={{ margin: "8px 0 4px", fontWeight: 500, color: fileName ? color.text : "var(--color-text-primary)", fontSize: 14 }}>{label}</p>
+      <p style={{ margin: 0, fontSize: 12, color: fileName ? color.border : "var(--color-text-tertiary)" }}>
+        {fileName || "Clique ou arraste um arquivo .xlsx"}
+      </p>
+    </div>
+  );
+}
+
+function detectColumns(rows) {
+  if (!rows || rows.length === 0) return {};
+  const keys = Object.keys(rows[0]);
+  const find = (...terms) => keys.find(k => terms.some(t => k.toUpperCase().includes(t))) || null;
+  return {
+    mf: find("MFINSTALLA", "INSTALACAO", "MF", "INSTALAÇÃO"),
+    trafo: find("TRAFO"),
+    faixa: find("FAIXA"),
+    lat: find("LAT", "LATITUDE"),
+    lon: find("LON", "LONGITUDE", "LONG"),
+    fiscal: find("FISCAL", "RESPONSAVEL", "RESPONSÁVEL"),
+  };
+}
+
+function parseBase(sheetsData) {
+  for (const [, rows] of Object.entries(sheetsData)) {
+    const cols = detectColumns(rows);
+    if (cols.mf && cols.faixa) return { rows, cols };
+  }
+  return null;
+}
+
+function parseMF(sheetsData) {
+  for (const [, rows] of Object.entries(sheetsData)) {
+    const cols = detectColumns(rows);
+    if (cols.mf && (cols.fiscal || cols.trafo)) return { rows, cols };
+  }
+  return null;
+}
+
+function generateReport(baseData, mfData) {
+  const { rows: baseRows, cols: baseCols } = baseData;
+  const { rows: mfRows, cols: mfCols } = mfData;
+
+  const baseMap = {};
+  baseRows.forEach(r => {
+    const key = String(r[baseCols.mf] || "").trim();
+    if (key) baseMap[key] = r;
+  });
+
+  const fiscalMap = {};
+  mfRows.forEach(r => {
+    const key = String(r[mfCols.mf] || "").trim();
+    if (!key) return;
+    const fiscal = mfCols.fiscal ? (r[mfCols.fiscal] || "Sem fiscal") : "Sem fiscal";
+    if (!fiscalMap[fiscal]) fiscalMap[fiscal] = [];
+    fiscalMap[fiscal].push({ key, row: r });
+  });
+
+  const changes = [];
+  mfRows.forEach(r => {
+    const key = String(r[mfCols.mf] || "").trim();
+    if (!key) return;
+    const faixaNova = normalizeFaixa(r[mfCols.faixa] || "");
+    const baseRow = baseMap[key];
+    const faixaAnt = baseRow ? normalizeFaixa(baseRow[baseCols.faixa] || "") : "";
+    if (faixaAnt && faixaNova && faixaAnt !== faixaNova) {
+      const fiscal = mfCols.fiscal ? (r[mfCols.fiscal] || "Sem fiscal") : "Sem fiscal";
+      changes.push({
+        mf: key,
+        trafo: r[mfCols.trafo] || baseRow?.[baseCols.trafo] || "—",
+        faixaAnt,
+        faixaNova,
+        fiscal,
+        melhora: FAIXA_ORDER.indexOf(faixaAnt) > FAIXA_ORDER.indexOf(faixaNova),
+      });
+    }
+  });
+
+  return { changes, fiscalMap };
+}
+
+export default function App() {
+  const [baseFile, setBaseFile] = useState(null);
+  const [mfFile, setMfFile] = useState(null);
+  const [report, setReport] = useState(null);
+  const [error, setError] = useState("");
+  const [filterFiscal, setFilterFiscal] = useState("Todos");
+  const [filterTipo, setFilterTipo] = useState("Todos");
+  const [search, setSearch] = useState("");
+
+  const fiscalColors = useCallback((fiscal) => {
+    if (!fiscal) return FISCAL_COLORS[0];
+    let h = 0;
+    for (let i = 0; i < fiscal.length; i++) h = (h * 31 + fiscal.charCodeAt(i)) % FISCAL_COLORS.length;
+    return FISCAL_COLORS[h];
+  }, []);
+
+  const handleGenerate = () => {
+    setError("");
+    if (!baseFile || !mfFile) { setError("Carregue os dois arquivos antes de gerar o relatório."); return; }
+    const baseData = parseBase(baseFile.sheets);
+    const mfData = parseMF(mfFile.sheets);
+    if (!baseData) { setError("Não foi possível identificar as colunas na base de trafos. Verifique se há colunas MFINSTALLA e FAIXA."); return; }
+    if (!mfData) { setError("Não foi possível identificar as colunas nas MFs do mês. Verifique se há coluna MFINSTALLA."); return; }
+    const result = generateReport(baseData, mfData);
+    setReport(result);
+    setFilterFiscal("Todos");
+    setFilterTipo("Todos");
+    setSearch("");
+  };
+
+  const fiscais = report ? ["Todos", ...new Set(report.changes.map(c => c.fiscal))] : [];
+  const filtered = report ? report.changes.filter(c => {
+    if (filterFiscal !== "Todos" && c.fiscal !== filterFiscal) return false;
+    if (filterTipo === "Melhora" && !c.melhora) return false;
+    if (filterTipo === "Piora" && c.melhora) return false;
+    if (search && !c.mf.includes(search) && !c.trafo.toString().includes(search)) return false;
+    return true;
+  }) : [];
+
+  const melhoras = report ? report.changes.filter(c => c.melhora).length : 0;
+  const pioras = report ? report.changes.filter(c => !c.melhora).length : 0;
+
+  return (
+    <div style={{ padding: "1.5rem 0", fontFamily: "var(--font-sans)" }}>
+      <h2 style={{ fontSize: 22, fontWeight: 500, margin: "0 0 4px", color: "var(--color-text-primary)" }}>
+        Acompanhamento de manutenção — trafos
+      </h2>
+      <p style={{ fontSize: 14, color: "var(--color-text-secondary)", margin: "0 0 1.5rem" }}>
+        Carregue a base anterior e as MFs do mês para ver o que mudou de faixa.
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+        <DropZone
+          label="Base anterior (trafos + faixas)"
+          onFile={(d) => setBaseFile(d)}
+          fileName={baseFile?.fileName}
+          color={{ bg: "#E6F1FB", border: "#378ADD", text: "#0C447C" }}
+        />
+        <DropZone
+          label="MFs atribuídas no mês (fiscal + nova faixa)"
+          onFile={(d) => setMfFile(d)}
+          fileName={mfFile?.fileName}
+          color={{ bg: "#EAF3DE", border: "#639922", text: "#3B6D11" }}
+        />
+      </div>
+
+      {error && (
+        <p style={{ color: "var(--color-text-danger)", fontSize: 13, margin: "0 0 12px", padding: "8px 12px", background: "var(--color-background-danger)", borderRadius: 8 }}>{error}</p>
+      )}
+
+      <button
+        onClick={handleGenerate}
+        disabled={!baseFile || !mfFile}
+        style={{
+          width: "100%", padding: "10px", borderRadius: 10, fontSize: 14, fontWeight: 500,
+          background: (baseFile && mfFile) ? "#185FA5" : "var(--color-background-secondary)",
+          color: (baseFile && mfFile) ? "#fff" : "var(--color-text-tertiary)",
+          border: "none", cursor: (baseFile && mfFile) ? "pointer" : "default", marginBottom: "1.5rem",
+          transition: "background 0.15s",
+        }}
+      >
+        <i className="ti ti-chart-bar" style={{ marginRight: 8, fontSize: 16, verticalAlign: -2 }} aria-hidden="true" />
+        Gerar relatório de mudanças
+      </button>
+
+      {report && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: "1.5rem" }}>
+            {[
+              { label: "Total de mudanças", value: report.changes.length, bg: "#F1EFE8", text: "#2C2C2A" },
+              { label: "Melhorias de faixa", value: melhoras, bg: "#EAF3DE", text: "#3B6D11" },
+              { label: "Pioras de faixa", value: pioras, bg: "#FCEBEB", text: "#A32D2D" },
+            ].map(s => (
+              <div key={s.label} style={{ background: s.bg, borderRadius: 10, padding: "12px 16px" }}>
+                <p style={{ fontSize: 12, color: s.text, margin: "0 0 4px", opacity: 0.7 }}>{s.label}</p>
+                <p style={{ fontSize: 26, fontWeight: 500, color: s.text, margin: 0 }}>{s.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {Object.keys(report.fiscalMap).length > 0 && (
+            <div style={{ marginBottom: "1.5rem" }}>
+              <p style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-secondary)", margin: "0 0 8px" }}>Fiscais identificados</p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {Object.entries(report.fiscalMap).map(([fiscal, mfs]) => {
+                  const c = fiscalColors(fiscal);
+                  return (
+                    <span key={fiscal} style={{
+                      background: c.bg, color: c.text, border: `1px solid ${c.border}`,
+                      borderRadius: 8, padding: "4px 12px", fontSize: 13, fontWeight: 500,
+                    }}>
+                      {fiscal} <span style={{ opacity: 0.7, fontWeight: 400 }}>· {mfs.length} MFs</span>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+            <input
+              type="text"
+              placeholder="Buscar por MF ou trafo..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{ flex: 1, minWidth: 160, fontSize: 13, padding: "6px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)" }}
+            />
+            <select value={filterFiscal} onChange={e => setFilterFiscal(e.target.value)}
+              style={{ fontSize: 13, padding: "6px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)" }}>
+              {fiscais.map(f => <option key={f}>{f}</option>)}
+            </select>
+            <select value={filterTipo} onChange={e => setFilterTipo(e.target.value)}
+              style={{ fontSize: 13, padding: "6px 10px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)" }}>
+              {["Todos", "Melhora", "Piora"].map(f => <option key={f}>{f}</option>)}
+            </select>
+          </div>
+
+          <div style={{ border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, overflow: "hidden" }}>
+            <div style={{
+              display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr 1.2fr 0.5fr",
+              padding: "8px 16px", background: "var(--color-background-secondary)",
+              fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)",
+              borderBottom: "0.5px solid var(--color-border-tertiary)",
+            }}>
+              <span>MF</span><span>Trafo</span><span>Faixa anterior</span><span>Faixa nova</span><span>Fiscal</span><span></span>
+            </div>
+            {filtered.length === 0 && (
+              <p style={{ textAlign: "center", padding: "2rem", color: "var(--color-text-tertiary)", fontSize: 14 }}>Nenhuma mudança encontrada com os filtros aplicados.</p>
+            )}
+            {filtered.map((c, i) => {
+              const fc = fiscalColors(c.fiscal);
+              return (
+                <div key={i} style={{
+                  display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr 1.2fr 0.5fr",
+                  padding: "10px 16px", alignItems: "center", fontSize: 13,
+                  borderBottom: i < filtered.length - 1 ? "0.5px solid var(--color-border-tertiary)" : "none",
+                  background: i % 2 === 0 ? "var(--color-background-primary)" : "var(--color-background-secondary)",
+                }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--color-text-primary)" }}>{c.mf}</span>
+                  <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>{c.trafo}</span>
+                  <span><Badge faixa={c.faixaAnt} /></span>
+                  <span><Badge faixa={c.faixaNova} /></span>
+                  <span style={{
+                    background: fc.bg, color: fc.text, border: `1px solid ${fc.border}`,
+                    borderRadius: 6, padding: "2px 8px", fontSize: 12, fontWeight: 500, display: "inline-block"
+                  }}>{c.fiscal}</span>
+                  <span style={{ textAlign: "center" }}>
+                    {c.melhora
+                      ? <i className="ti ti-arrow-up" style={{ color: "#3B6D11", fontSize: 16 }} title="Melhora" aria-label="Melhora" />
+                      : <i className="ti ti-arrow-down" style={{ color: "#A32D2D", fontSize: 16 }} title="Piora" aria-label="Piora" />}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {filtered.length > 0 && (
+            <button onClick={() => {
+              const wb = XLSX.utils.book_new();
+              const wsData = [
+                ["MF", "Trafo", "Faixa Anterior", "Faixa Nova", "Fiscal", "Tipo"],
+                ...filtered.map(c => [c.mf, c.trafo, c.faixaAnt, c.faixaNova, c.fiscal, c.melhora ? "Melhora" : "Piora"]),
+              ];
+              const ws = XLSX.utils.aoa_to_sheet(wsData);
+              XLSX.utils.book_append_sheet(wb, ws, "Relatório");
+              XLSX.writeFile(wb, "relatorio_mudancas_faixa.xlsx");
+            }} style={{
+              marginTop: 12, padding: "8px 16px", borderRadius: 8, fontSize: 13,
+              border: "0.5px solid var(--color-border-secondary)", cursor: "pointer",
+              background: "var(--color-background-secondary)", color: "var(--color-text-primary)",
+            }}>
+              <i className="ti ti-download" style={{ marginRight: 6, fontSize: 15, verticalAlign: -2 }} aria-hidden="true" />
+              Exportar relatório (.xlsx)
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
